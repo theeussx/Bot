@@ -1,9 +1,9 @@
 // src/utils/groq.js
 import Groq from "groq-sdk";
-import { BOT_SETTINGS } from '../config/settings.js';
+import { botConfig } from '../config/settings.js';
 
 const groq = new Groq({
-    apiKey: BOT_SETTINGS.GROQ_API_KEY,
+    apiKey: botConfig.groqApiKey,
 });
 
 /**
@@ -12,7 +12,7 @@ const groq = new Groq({
  * @returns {Promise<string>} A resposta gerada pela IA.
  */
 export async function getGroqChatCompletion(userInput) {
-    if (!BOT_SETTINGS.GROQ_API_KEY || BOT_SETTINGS.GROQ_API_KEY === 'SUA_CHAVE_GROQ_AQUI') {
+    if (!botConfig.groqApiKey || botConfig.groqApiKey === 'SUA_CHAVE_API_GROQ') {
         return "A chave da API da Groq não foi configurada. Por favor, adicione sua chave no arquivo `src/config/settings.js`.";
     }
 
@@ -21,14 +21,14 @@ export async function getGroqChatCompletion(userInput) {
             messages: [
                 {
                     role: "system",
-                    content: `Você é o ${BOT_SETTINGS.BOT_NAME}, um assistente virtual para uma loja. Responda de forma amigável, concisa e útil. O menu de opções já foi apresentado ao usuário.`
+                    content: `Você é o ${botConfig.botName}, um assistente virtual para uma loja. Responda de forma amigável, concisa e útil. O menu de opções já foi apresentado ao usuário.`
                 },
                 {
                     role: "user",
                     content: userInput,
                 },
             ],
-            model: BOT_SETTINGS.GROQ_MODEL,
+            model: botConfig.groqModel,
         });
 
         return completion.choices[0]?.message?.content || "Não foi possível obter uma resposta da IA.";
