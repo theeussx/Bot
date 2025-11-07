@@ -6,10 +6,13 @@ const DB_PATH = path.resolve('./data.json');
 // === Funções utilitárias ===
 function loadDB() {
     if (!fs.existsSync(DB_PATH)) {
-        fs.writeFileSync(DB_PATH, JSON.stringify({
-            humanSupport: {},
-            appointments: {}
-        }, null, 2));
+        fs.writeFileSync(
+            DB_PATH,
+            JSON.stringify({
+                humanSupport: {},
+                appointments: {}
+            }, null, 2)
+        );
     }
     return JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
 }
@@ -18,7 +21,7 @@ function saveDB(data) {
     fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
 }
 
-// === Suporte humano ===
+// === SUPORTE HUMANO ===
 export async function isHumanSupportActive(jid) {
     const db = loadDB();
     return db.humanSupport[jid]?.active || false;
@@ -35,10 +38,13 @@ export async function activateHumanSupport(jid) {
 
 export async function deactivateHumanSupport(jid) {
     const db = loadDB();
+    // Ao invés de só desativar, removemos o registro do banco
     if (db.humanSupport[jid]) {
-        db.humanSupport[jid].active = false;
+        delete db.humanSupport[jid];
+        saveDB(db);
+        return true;
     }
-    saveDB(db);
+    return false;
 }
 
 export async function getAllActiveSupportUsers() {
@@ -50,7 +56,7 @@ export async function getAllActiveSupportUsers() {
     return activeUsers;
 }
 
-// === Sistema de Agendamento com Ana Clara ===
+// === SISTEMA DE AGENDAMENTO COM ANA CLARA ===
 
 // Configuração de horários: segunda a sábado, 08h00 às 18h00, intervalos de 1h30
 const days = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];

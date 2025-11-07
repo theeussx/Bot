@@ -4,8 +4,8 @@ export const botConfig = {
   botName: "Bot Aninha beauty",
   groqModel: "llama-3.3-70b-versatile",
 
-  humanSupportNumber: "5581986703524",
-  ownerJid: "5581986703524@s.whatsapp.net",
+  humanSupportNumber: "558173123383",
+  ownerJid: "558173123383@s.whatsapp.net",
 
   // Inatividade
   inactivityTimeout: 30 * 60 * 1000, // 30 minutos
