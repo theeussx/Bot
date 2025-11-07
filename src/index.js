@@ -1,4 +1,5 @@
 // src/index.js
+import 'dotenv/config';
 import { connectToWhatsApp } from './utils/baileys.js';
 import { messageHandler } from './handlers/messageHandler.js';
 import { startInactivityScheduler } from './scheduler/inactivityScheduler.js';

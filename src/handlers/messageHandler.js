@@ -1,242 +1,132 @@
-// src/handlers/messageHandler.js
-import { sendText, sendImage } from '../utils/baileys.js';
-import { getGroqChatCompletion } from '../utils/groq.js';
-import { botConfig } from '../config/settings.js';
+import { sendText } from '../utils/baileys.js';
 import {
-  isHumanSupportActive,
+  botConfig,
+} from '../config/settings.js';
+import {
+  getAvailableSlots,
+  addAppointment,
   activateHumanSupport,
   deactivateHumanSupport,
-  getAllActiveSupportUsers,
-  updateUserTimestamp,
-  listTakenTimes,
-  addAppointment
+  isHumanSupportActive
 } from '../db/jsonDB.js';
-import { generateDailySlots, generateAvailableDates, formatDateDisplay } from '../utils/slots.js';
+import Groq from 'groq-sdk';
+import fs from 'fs/promises';
 
-/**
- * Verifica e encerra atendimentos por inatividade.
- */
-export async function checkInactivity(sock) {
-  const activeUsers = await getAllActiveSupportUsers();
-  const now = Date.now();
-  const timeout = botConfig.inactivityTimeout;
+const groq = new Groq({ apiKey: botConfig.groqApiKey });
 
-  for (const jid in activeUsers) {
-    const last = activeUsers[jid].timestamp;
-    if (now - last > timeout) {
-      await deactivateHumanSupport(jid);
-      await sendText(sock, jid, botConfig.inactivityEndMessage);
-      console.log(`🕓 Atendimento de ${jid} encerrado por inatividade.`);
-    }
-  }
-}
-
-// Comandos
-const commandHandlers = {
-  '1': handleAbout,
-  'sobre': handleAbout,
-  '2': handleServices,
-  'servicos': handleServices,
-  'serviços': handleServices,
-  '3': handleHumanSupport,
-  'suporte': handleHumanSupport,
-  'falar com um atendente': handleHumanSupport,
-  '4': handlePayment,
-  'pagamento': handlePayment,
-  '5': handleAppointmentMenu,
-  'agendar': handleAppointmentMenu,
-  'menu': handleMenu,
-  'voltar': handleMenu
-};
-
-/**
- * Handler principal
- */
+// =======================================
+// === Função principal de mensagens ===
+// =======================================
 export async function messageHandler(sock, jid, text, msg) {
-  const normalizedText = text?.trim()?.toLowerCase() || '';
-  console.log(`📩 Mensagem recebida de ${jid}: ${text}`);
+  text = text.trim().toLowerCase();
 
+  // === Encerrar suporte humano manualmente ===
+  if (text === '!encerrar') {
+    const isHuman = await isHumanSupportActive(jid);
+    if (isHuman) {
+      await deactivateHumanSupport(jid);
+      await sendText(sock, jid, "✅ O suporte humano foi encerrado. Agora você pode voltar a falar com o bot normalmente! 🤖");
+    } else {
+      await sendText(sock, jid, "⚠️ Você não está em atendimento humano no momento.");
+    }
+    return;
+  }
+
+  // === Verifica se o suporte humano está ativo ===
+  if (await isHumanSupportActive(jid)) return; // ignora mensagens enquanto suporte humano está ativo
+
+  // === Comandos principais ===
+  if (['oi', 'olá', 'ola', 'menu', 'início', 'inicio'].includes(text)) {
+    const menu = botConfig.welcomeMessage.replace('{botName}', botConfig.botName);
+    await sendText(sock, jid, menu);
+    return;
+  }
+
+  // === Opção 1: Sobre nós ===
+  if (text === '1') {
+    await sendText(sock, jid, botConfig.aboutText || "Somos um salão especializado em beleza e cuidados femininos. 💅✨");
+    return;
+  }
+
+  // === Opção 2: Nossos serviços ===
+  if (text === '2') {
+    await sendText(sock, jid,
+      "💇‍♀️ *Serviços da Ana Clara:*\n- Escova\n- Hidratação\n- Progressiva\n- Corte feminino\n\nDigite *5* para agendar um horário presencial."
+    );
+    return;
+  }
+
+  // === Opção 3: Falar com um atendente ===
+  if (text === '3' || text.includes('suporte')) {
+    await activateHumanSupport(jid);
+    await sendText(sock, jid, botConfig.forwardToHumanMessage);
+    await sendText(sock, botConfig.ownerJid, `👩‍💻 Novo atendimento humano iniciado com o número: ${jid}`);
+    return;
+  }
+
+  // === Opção 4: Pagamento adiantado ===
+  if (text === '4') {
+    await sendText(sock, jid, botConfig.paymentText);
+    return;
+  }
+
+  // === Opção 5: Agendamento ===
+  if (text === '5' || text.includes('agendar')) {
+    const available = await getAvailableSlots();
+
+    // Verifica se há horários disponíveis
+    const diasComHorarios = Object.entries(available)
+      .filter(([_, horarios]) => horarios.length > 0);
+
+    if (diasComHorarios.length === 0) {
+      await sendText(sock, jid, "😕 Nenhum horário disponível no momento. Digite *3* para falar com o suporte humano.");
+      return;
+    }
+
+    // Monta tabela bonita
+    let tabela = "📅 *Horários disponíveis:*\n\n";
+    for (const [dia, horarios] of diasComHorarios) {
+      tabela += `*${dia}:* ${horarios.join(', ')}\n`;
+    }
+
+    await sendText(sock, jid, tabela);
+    await sendText(sock, jid, "Escolha o horário enviando algo como: *Terça 10:30*");
+    return;
+  }
+
+  // === Tenta registrar agendamento se detectar hora ===
+  if (/(\d{1,2}:\d{2})/.test(text)) {
+    const resposta = await addAppointment(jid, text);
+
+    // Se confirmar agendamento
+    if (resposta.startsWith('✅')) {
+      await sendText(sock, jid, resposta);
+      await sendText(sock, botConfig.ownerJid, `📢 Novo agendamento confirmado:\n👤 Cliente: ${jid}\n${resposta}`);
+      return;
+    }
+
+    // Caso contrário, só envia resposta normal
+    await sendText(sock, jid, resposta);
+    return;
+  }
+
+  // === Resposta IA (fallback) ===
   try {
-    await updateUserTimestamp(jid, Date.now());
+    const completion = await groq.chat.completions.create({
+      model: botConfig.groqModel,
+      messages: [
+        {
+          role: "system",
+          content: `Você é ${botConfig.botName}, um assistente simpático e prestativo de um salão de beleza.`,
+        },
+        { role: "user", content: text },
+      ],
+    });
 
-    if (jid === botConfig.ownerJid && normalizedText.startsWith('!encerrar')) {
-      await handleOwnerCloseCommand(sock, jid, normalizedText);
-      return;
-    }
-
-    // checar inatividade via scheduler preferível; mantém fallback aqui
-    await checkInactivity(sock);
-
-    if (await isHumanSupportActive(jid)) {
-      console.log(`👩‍💼 ${jid} está em suporte humano. Ignorando.`);
-      return;
-    }
-
-    // Fluxo de agendamento em memória por JID
-    if (await handleAppointmentFlow(sock, jid, text)) return;
-
-    const handler = commandHandlers[normalizedText];
-    if (handler) {
-      await handler(sock, jid);
-      return;
-    }
-
-    // fallback IA
-    await handleAIResponse(sock, jid, text);
+    const respostaIA = completion.choices[0]?.message?.content || "Desculpe, não entendi 😅. Digite *menu* para ver as opções novamente.";
+    await sendText(sock, jid, respostaIA);
   } catch (err) {
-    console.error(`❌ Erro no handler de ${jid}:`, err);
-    await sendText(sock, jid, '⚠️ Erro ao processar sua mensagem. Tente novamente.');
+    console.error("Erro IA:", err);
+    await sendText(sock, jid, "⚠️ Ocorreu um erro com a IA, mas você pode digitar *menu* para continuar.");
   }
-}
-
-// ================= Handlers fixos =================
-async function handleAbout(sock, jid) {
-  await sendText(sock, jid, `*1. Sobre a Empresa*\n\n${botConfig.aboutText}\n\nDigite *menu* para voltar.`);
-}
-
-async function handleServices(sock, jid) {
-  await sendImage(sock, jid, botConfig.servicesImage, `*2. Nossos Serviços*\n\nConfira abaixo!\n\nDigite *menu* para voltar.`);
-}
-
-async function handleHumanSupport(sock, jid) {
-  await sendText(sock, jid, botConfig.forwardToHumanMessage);
-  await activateHumanSupport(jid);
-  if (botConfig.humanSupportNumber) {
-    await sendText(sock, `${botConfig.humanSupportNumber}@s.whatsapp.net`, `📞 Novo cliente solicitando suporte: ${jid}`);
-  }
-}
-
-async function handlePayment(sock, jid) {
-  await sendText(sock, jid, `*4. Pagamento Adiantado*\n\n${botConfig.paymentText}\n\nDigite *menu* para voltar.`);
-}
-
-async function handleMenu(sock, jid) {
-  await sendText(sock, jid, botConfig.welcomeMessage.replace('{botName}', botConfig.botName));
-}
-
-// ================= Agendamento =================
-const appointmentSessions = new Map();
-
-async function handleAppointmentMenu(sock, jid) {
-  // Gera lista de datas disponíveis (próximos N dias, segunda-sábado)
-  const dates = generateAvailableDates(botConfig.appointmentDaysAhead);
-  // Para cada data, contamos quantos slots disponíveis
-  const dailySlots = generateDailySlots();
-
-  let mensagem = '📅 *Agendamento Presencial* - Disponibilidade (Seg a Sáb)\n\n';
-  for (const iso of dates) {
-    const taken = await listTakenTimes(iso);
-    const availableCount = dailySlots.filter(s => !taken.includes(s)).length;
-    mensagem += `${formatDateDisplay(iso)} — ${availableCount} horários disponíveis\n`;
-  }
-  mensagem += `\nResponda com a *data* no formato DD/MM/YYYY que você quer (ex: 06/11/2025).`;
-  appointmentSessions.set(jid, { step: 1 });
-  await sendText(sock, jid, mensagem);
-}
-
-/**
- * Flow:
- * step 1 -> espera data (DD/MM/YYYY)
- * step 2 -> mostra horários disponíveis desse dia (HH:MM) e pede escolher horário
- * step 3 -> pede nome completo pra confirmar
- */
-async function handleAppointmentFlow(sock, jid, rawText) {
-  const session = appointmentSessions.get(jid);
-  if (!session) return false;
-
-  const text = rawText?.trim();
-  // Passo 1: escolher data
-  if (session.step === 1) {
-    // converte DD/MM/YYYY -> YYYY-MM-DD
-    const match = text.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-    if (!match) {
-      await sendText(sock, jid, 'Formato inválido. Envie a data como DD/MM/YYYY (ex: 06/11/2025).');
-      return true;
-    }
-    const iso = `${match[3]}-${match[2]}-${match[1]}`;
-    // Verifica se é Domingo
-    const d = new Date(`${iso}T00:00:00`);
-    if (d.getDay() === 0) {
-      await sendText(sock, jid, 'Desculpe, não atendemos aos domingos. Escolha outra data (Seg-Sáb).');
-      return true;
-    }
-    // Verifica se data está dentro do range permitido
-    const availableDates = generateAvailableDates(botConfig.appointmentDaysAhead);
-    if (!availableDates.includes(iso)) {
-      await sendText(sock, jid, `Escolha uma data dentro dos próximos ${botConfig.appointmentDaysAhead} dias (Seg-Sáb).`);
-      return true;
-    }
-
-    // lista horários livres
-    const dailySlots = generateDailySlots();
-    const taken = await listTakenTimes(iso);
-    const free = dailySlots.filter(s => !taken.includes(s));
-    if (!free.length) {
-      await sendText(sock, jid, `😕 Nenhum horário disponível em ${formatDateDisplay(iso)}. Escolha outra data.`);
-      return true;
-    }
-
-    session.date = iso;
-    session.freeSlots = free;
-    session.step = 2;
-    appointmentSessions.set(jid, session);
-
-    await sendText(sock, jid, `⏰ Horários disponíveis em ${formatDateDisplay(iso)}:\n${free.join(', ')}\n\nResponda com o horário desejado (ex: 10:30).`);
-    return true;
-  }
-
-  // Passo 2: escolher horário
-  if (session.step === 2) {
-    const chosen = text;
-    if (!session.freeSlots.includes(chosen)) {
-      await sendText(sock, jid, `⚠️ Horário inválido ou indisponível. Escolha um dos horários listados: ${session.freeSlots.join(', ')}`);
-      return true;
-    }
-    session.time = chosen;
-    session.step = 3;
-    appointmentSessions.set(jid, session);
-    await sendText(sock, jid, 'Por favor, digite seu *nome completo* para confirmar o agendamento:');
-    return true;
-  }
-
-  // Passo 3: confirmar nome e salvar
-  if (session.step === 3) {
-    const name = text;
-    const ok = await addAppointment(session.date, session.time, name, jid);
-    if (!ok) {
-      // Slot acabou de ser reservado por outro
-      session.step = 1;
-      appointmentSessions.set(jid, session);
-      await sendText(sock, jid, '⚠️ Esse horário acabou de ser reservado. Volte a escolher uma data.');
-      return true;
-    }
-    await sendText(sock, jid, `✅ Agendamento confirmado!\n*${formatDateDisplay(session.date)} às ${session.time}*\nAtendente: *${botConfig.attendantName}*\nNome: *${name}*\n\nSe precisar alterar, contate o suporte.`);
-    appointmentSessions.delete(jid);
-    return true;
-  }
-
-  return false;
-}
-
-// ================= Outros handlers =================
-async function handleOwnerCloseCommand(sock, ownerJid, commandText) {
-  const [, targetJid] = commandText.split(/\s+/);
-  if (!targetJid) {
-    await sendText(sock, ownerJid, `❗ Use: *!encerrar JID_DO_CLIENTE*`);
-    return;
-  }
-
-  await deactivateHumanSupport(targetJid);
-  await sendText(sock, ownerJid, `✅ Atendimento do cliente ${targetJid} encerrado.`);
-  await sendText(sock, targetJid, `📢 Seu atendimento foi encerrado. Digite *menu* para voltar às opções.`);
-}
-
-async function handleAIResponse(sock, jid, text) {
-  await sendText(sock, jid, '🤖 Estou pensando na melhor resposta pra você...');
-  const aiResponse = await getGroqChatCompletion(text).catch(() => null);
-  if (!aiResponse) {
-    await sendText(sock, jid, '😅 Não consegui entender agora. Pode repetir?');
-    return;
-  }
-  await sendText(sock, jid, aiResponse);
 }
