@@ -121,31 +121,7 @@ export async function saveHumanSupportList(list) {
   await fs.writeFile(HUMAN_SUPPORT_FILE, JSON.stringify(list, null, 2));
 }
 
-// === HORÁRIOS DISPONÍVEIS ===
-export async function getAvailableSlots() {
-  return {
-    segunda: [
-      { date: "2025-11-10T09:00:00", time: "09:00" },
-      { date: "2025-11-10T15:00:00", time: "15:00" },
-    ],
-    terca: [
-      { date: "2025-11-11T09:00:00", time: "09:00" },
-      { date: "2025-11-11T15:00:00", time: "15:00" },
-    ],
-    quarta: [
-      { date: "2025-11-12T09:00:00", time: "09:00" },
-      { date: "2025-11-12T15:00:00", time: "15:00" },
-    ],
-    quinta: [
-      { date: "2025-11-13T09:00:00", time: "09:00" },
-      { date: "2025-11-13T15:00:00", time: "15:00" },
-    ],
-    sexta: [
-      { date: "2025-11-14T09:00:00", time: "09:00" },
-      { date: "2025-11-14T15:00:00", time: "15:00" },
-    ],
-  };
-}
+
 
 // === AGENDAMENTO ===
 export async function addAppointment(user, text, sock) {
@@ -154,7 +130,27 @@ export async function addAppointment(user, text, sock) {
     slots.map(slot => ({ ...slot, day }))
   );
 
-  const diasSemana = {
+  const d// === HORÁRIOS DISPONÍVEIS ===
+function generateHourlySlots(startHour, endHour) {
+  const slots = [];
+  for (let hour = startHour; hour <= endHour; hour++) {
+    slots.push({ time: `${hour.toString().padStart(2, "0")}:00` });
+  }
+  return slots;
+}
+
+export async function getAvailableSlots() {
+  return {
+    segunda: generateHourlySlots(7, 16),
+    terca: generateHourlySlots(7, 22),
+    quarta: generateHourlySlots(7, 22),
+    quinta: generateHourlySlots(7, 16),
+    sexta: generateHourlySlots(7, 22),
+    sabado: generateHourlySlots(7, 22),
+    domingo: generateHourlySlots(7, 16),
+  };
+}
+iasSemana = {
     domingo: 0, segunda: 1, terca: 2, terça: 2,
     quarta: 3, quinta: 4, sexta: 5, sabado: 6, sábado: 6
   };
