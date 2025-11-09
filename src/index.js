@@ -5,7 +5,7 @@ import { handleMessage } from './handlers/messageHandler.js';
 import { startInactivityScheduler } from './scheduler/inactivityScheduler.js';
 
 async function startBot() {
-  console.log("Iniciando o Bot de WhatsApp com Groq AI...");
+  console.log("Iniciando bot whatsapp...");
 
   // Conecta e recebe o sock
   const sock = await connectToWhatsApp(handleMessage);
@@ -13,7 +13,7 @@ async function startBot() {
   // Inicia o scheduler de inatividade
   startInactivityScheduler(sock);
 
-  console.log('Bot inicializado e ready.');
+  console.log('Bot iniciado');
 }
 
 startBot().catch(err => console.error("Erro fatal ao iniciar o bot:", err));
