@@ -1,134 +1,174 @@
-import { sendText } from '../utils/baileys.js';
-import { botConfig } from '../config/settings.js';
 import {
-  getAvailableSlots,
+  botConfig,
+  gerarPromptIA,
   addAppointment,
+  cancelAppointment,
+  finishAppointment,
+  getAvailableSlots,
   activateHumanSupport,
   deactivateHumanSupport,
   isHumanSupportActive
-} from '../db/jsonDB.js';
-import Groq from 'groq-sdk';
-import fs from 'fs/promises';
+} from "../config/settings.js";
 
-const groq = new Groq({ apiKey: botConfig.groqApiKey });
+import { callGroqAPI } from "../services/groqService.js";
 
-// =======================================
-// === Função principal de mensagens ===
-// =======================================
-export async function messageHandler(sock, jid, text, msg) {
-  text = text.trim().toLowerCase();
+// Armazena usuários que já receberam o menu inicial
+const greetedUsers = new Set();
+// Armazena quem está sendo processado pra evitar mensagens duplicadas
+const processingUsers = new Set();
 
-  // === ENCERRAR SUPORTE HUMANO MANUALMENTE ===
-  if (text === '!encerrar') {
-    const isHuman = await isHumanSupportActive(jid);
-    if (isHuman) {
-      await deactivateHumanSupport(jid); // Remove do banco
-      await sendText(sock, jid, "✅ O suporte humano foi encerrado. Agora o bot está ativo novamente! 🤖");
-    } else {
-      await sendText(sock, jid, "⚠️ Você não está em atendimento humano no momento.");
-    }
-    return;
-  }
+export async function handleMessage(sock, msg) {
+  if (!msg || msg.key.fromMe || !msg.message) return;
 
-  // === SE O SUPORTE HUMANO ESTIVER ATIVO, BOT NÃO RESPONDE ===
-  if (await isHumanSupportActive(jid)) return;
+  const from = msg.key.remoteJid;
+  const messageContent =
+    msg.message?.conversation ||
+    msg.message?.extendedTextMessage?.text ||
+    msg.message?.imageMessage?.caption ||
+    "";
 
-  // === INÍCIO / MENU ===
-  if (['oi', 'olá', 'ola', 'menu', 'início', 'inicio'].includes(text)) {
-    const menu = botConfig.welcomeMessage.replace('{botName}', botConfig.botName);
-    await sendText(sock, jid, menu);
-    return;
-  }
+  const text = messageContent.trim().toLowerCase();
+  if (!text) return;
 
-  // === OPÇÃO 1: SOBRE NÓS ===
-  if (text === '1') {
-    await sendText(sock, jid, botConfig.aboutText || "Somos um salão especializado em beleza e cuidados femininos. 💅✨");
-    return;
-  }
+  if (processingUsers.has(from)) return;
+  processingUsers.add(from);
 
-  // === OPÇÃO 2: NOSSOS SERVIÇOS ===
-  if (text === '2') {
-    await sendText(sock, jid,
-      "💇‍♀️ *Serviços da Ana Clara:*\n- Escova\n- Hidratação\n- Progressiva\n- Corte feminino\n\nDigite *5* para agendar um horário presencial."
-    );
-    return;
-  }
-
-  // === OPÇÃO 3: SUPORTE HUMANO ===
-  if (text === '3' || text.includes('suporte')) {
-    await activateHumanSupport(jid);
-    await sendText(sock, jid, botConfig.forwardToHumanMessage);
-
-    // Gera link clicável do WhatsApp pra você entrar direto na conversa
-    const link = `https://wa.me/${jid.replace('@s.whatsapp.net', '')}`;
-    await sendText(sock, botConfig.ownerJid, 
-      `👩‍💻 *Novo atendimento humano iniciado!*\n\n📱 Cliente: ${jid}\n🔗 Converse diretamente: ${link}`
-    );
-    return;
-  }
-
-  // === OPÇÃO 4: PAGAMENTO ===
-  if (text === '4') {
-    await sendText(sock, jid, botConfig.paymentText);
-    return;
-  }
-
-  // === OPÇÃO 5: AGENDAMENTO ===
-  if (text === '5' || text.includes('agendar')) {
-    const available = await getAvailableSlots();
-    const diasComHorarios = Object.entries(available).filter(([_, h]) => h.length > 0);
-
-    if (diasComHorarios.length === 0) {
-      await sendText(sock, jid, "😕 Nenhum horário disponível no momento. Digite *3* para falar com o suporte humano.");
-      return;
-    }
-
-    let tabela = "📅 *Horários disponíveis:*\n\n";
-    for (const [dia, horarios] of diasComHorarios) {
-      tabela += `*${dia}:* ${horarios.join(', ')}\n`;
-    }
-
-    await sendText(sock, jid, tabela);
-    await sendText(sock, jid, "Escolha o horário enviando algo como: *Terça 10:30*");
-    return;
-  }
-
-  // === REGISTRAR AGENDAMENTO ===
-  if (/(\d{1,2}:\d{2})/.test(text)) {
-    const resposta = await addAppointment(jid, text);
-
-    if (resposta.startsWith('✅')) {
-      await sendText(sock, jid, resposta);
-
-      // Mensagem pra você (dono)
-      const link = `https://wa.me/${jid.replace('@s.whatsapp.net', '')}`;
-      await sendText(sock, botConfig.ownerJid, 
-        `📢 *Novo agendamento confirmado!*\n\n👤 Cliente: ${jid}\n🔗 Acesse: ${link}\n\n${resposta}`
-      );
-      return;
-    }
-
-    await sendText(sock, jid, resposta);
-    return;
-  }
-
-  // === RESPOSTA IA (fallback) ===
   try {
-    const completion = await groq.chat.completions.create({
-      model: botConfig.groqModel,
-      messages: [
-        {
-          role: "system",
-          content: `Você é ${botConfig.botName}, um atendente simpático e prestativo de um salão de beleza.`,
-        },
-        { role: "user", content: text },
-      ],
-    });
+    // === PRIMEIRO CONTATO: envia menu automaticamente ===
+    if (!greetedUsers.has(from)) {
+      greetedUsers.add(from);
+      const welcomeMsg = botConfig.welcomeMessage.replace("{botName}", botConfig.botName);
+      await sock.sendMessage(from, { text: welcomeMsg });
+      return; // não processa mais nada nessa primeira mensagem
+    }
 
-    const respostaIA = completion.choices[0]?.message?.content || "Desculpe, não entendi 😅. Digite *menu* para ver as opções novamente.";
-    await sendText(sock, jid, respostaIA);
-  } catch (err) {
-    console.error("Erro IA:", err);
-    await sendText(sock, jid, "⚠️ Ocorreu um erro com a IA. Digite *menu* para continuar.");
+    // === SUPORTE HUMANO ATIVO ===
+    if (await isHumanSupportActive(from)) {
+      if (text === "!voltar") {
+        await deactivateHumanSupport(from);
+        await sock.sendMessage(from, {
+          text: "✅ Você saiu do modo atendimento humano. Voltando ao menu principal!"
+        });
+
+        // Avisar o dono que o usuário saiu
+        const avisoSaida = `
+📢 *Atendimento encerrado pelo usuário!*
+👤 wa.me/${from.replace("@s.whatsapp.net", "")}
+        `;
+        await sock.sendMessage(botConfig.ownerJid, { text: avisoSaida });
+      } else {
+        await sock.sendMessage(from, {
+          text: "👩‍💻 O atendimento humano está ativo. Use *!voltar* para retornar ao bot."
+        });
+      }
+      return;
+    }
+
+    // === COMANDO DO DONO: ENCERRAR AGENDAMENTO ===
+    if (text.startsWith("!encerrar")) {
+      if (from !== botConfig.ownerJid) {
+        await sock.sendMessage(from, { text: "⚠️ Apenas o dono pode encerrar agendamentos." });
+        return;
+      }
+
+      const id = text.split(" ")[1];
+      if (!id) {
+        await sock.sendMessage(from, { text: "❌ Use o comando corretamente: *!encerrar <id>*" });
+        return;
+      }
+
+      const resposta = await finishAppointment(id);
+      await sock.sendMessage(from, { text: resposta });
+      return;
+    }
+
+    // === AGENDAMENTO ===
+    if (text === "5" || text.includes("agendar")) {
+      const slots = await getAvailableSlots();
+      let resposta = "📅 *Horários disponíveis:*\n\n";
+
+      for (const [dia, horas] of Object.entries(slots)) {
+        resposta += `*${dia}:*\n${horas.map(slot => slot.time).join(", ")}\n\n`;
+      }
+
+      resposta += "Digite o dia e o horário que deseja, por exemplo: _terça às 15:00_.";
+      await sock.sendMessage(from, { text: resposta });
+      return;
+    }
+
+    // === CANCELAR AGENDAMENTO ===
+    if (text === "!cancelar") {
+      const resposta = await cancelAppointment(from);
+      await sock.sendMessage(from, { text: resposta });
+      return;
+    }
+
+    // === FINALIZAR AGENDAMENTO ===
+    if (text.startsWith("!finalizar")) {
+      const id = text.split(" ")[1];
+      const resposta = await finishAppointment(id);
+      await sock.sendMessage(from, { text: resposta });
+      return;
+    }
+
+    // === ATENDENTE HUMANO ===
+    if (text === "3" || text.includes("atendente")) {
+      await activateHumanSupport(from);
+      await sock.sendMessage(from, { text: botConfig.forwardToHumanMessage });
+
+      // Avisar o dono que alguém pediu atendimento humano
+      const aviso = `
+📢 *Novo atendimento humano solicitado!*
+👤 Usuário: wa.me/${from.replace("@s.whatsapp.net", "")}
+💬 Está aguardando o atendente entrar na conversa.
+      `;
+      await sock.sendMessage(botConfig.ownerJid, { text: aviso });
+      return;
+    }
+
+    // === MENU ===
+    if (text === "menu") {
+      const msg = botConfig.welcomeMessage.replace("{botName}", botConfig.botName);
+      await sock.sendMessage(from, { text: msg });
+      return;
+    }
+
+    // === SOBRE NÓS ===
+    if (text === "1") {
+      await sock.sendMessage(from, { text: botConfig.aboutText });
+      return;
+    }
+
+    // === SERVIÇOS ===
+    if (text === "2") {
+      await sock.sendMessage(from, { text: botConfig.servicesList });
+      return;
+    }
+
+    // === PAGAMENTO ADIANTADO ===
+    if (text === "4") {
+      await sock.sendMessage(from, { text: botConfig.paymentText });
+      return;
+    }
+
+    // === TENTAR AGENDAR AUTOMATICAMENTE ===
+    const agendamentoMsg = await addAppointment(from, text);
+    if (!agendamentoMsg.startsWith("⚠️")) {
+      await sock.sendMessage(from, { text: agendamentoMsg });
+      return;
+    }
+
+    // === RESPOSTA AUTOMÁTICA PELA IA ===
+    const prompt = gerarPromptIA(messageContent);
+    const iaResponse = await callGroqAPI(prompt);
+    await sock.sendMessage(from, { text: iaResponse });
+
+  } catch (error) {
+    console.error("Erro ao processar mensagem:", error);
+    await sock.sendMessage(from, {
+      text: "⚠️ Ocorreu um erro ao processar sua mensagem. Tente novamente em alguns instantes."
+    });
+  } finally {
+    processingUsers.delete(from);
   }
 }
