@@ -56,7 +56,7 @@ Cansada de correr de um salão pra outro? Aqui, nós cuidamos de você da ponta 
 👩‍🎨 *Responsável:* Ana Clara  
 
 🧠 *Desenvolvido por:* Theeussx  
-🌐 *Portfólio:* https://theeussx.vercel.app
+🌐 *Portfólio:* https://theeussx.online
 `,
   servicesList: `
 💅 *Nossos Serviços — Ana Clara Beauty* 💖
@@ -264,7 +264,7 @@ Baseie suas respostas nas informações abaixo:
 - Serviços: sobrancelhas, unhas, cílios, pedicure e tranças.
 - Valores e opções descritos na lista de serviços.
 - Endereço: Rua Pintor Mário Nunes, 29 — Alto José do Pinho (Bom Sucesso).
-- Desenvolvido por Theeussx — https://theeussx.vercel.app
+- Desenvolvido por Theeussx — https://theeussx.online
 
 Usuário perguntou: "${texto}"
 Responda de modo natural, como se fosse uma atendente real.
